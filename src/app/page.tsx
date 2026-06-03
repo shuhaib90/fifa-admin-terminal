@@ -6,7 +6,7 @@ import { initialMatches, Match, Team } from '@/lib/data';
 import { 
   Sliders, RefreshCw, Send, Plus, Award, AlertTriangle, 
   Play, Loader2, RotateCcw, XCircle, Users, BarChart3, 
-  TrendingUp, Award as BadgeIcon, DollarSign, Activity, Flame, ShieldAlert
+  TrendingUp, Award as BadgeIcon, DollarSign, Activity, Flame, ShieldAlert, Trash2
 } from 'lucide-react';
 
 interface DBMarket {
@@ -75,6 +75,29 @@ export default function AdminPage() {
 
   // Sync state
   const [syncingApi, setSyncingApi] = useState<boolean>(false);
+  const [clearingAllPredictions, setClearingAllPredictions] = useState<boolean>(false);
+
+  const handleClearAllPredictions = async () => {
+    const confirmClear = window.confirm(
+      "DANGER: Are you absolutely sure you want to DELETE ALL user prediction data?\n\nThis will wipe out all user prediction history from the database! This action cannot be undone."
+    );
+    if (!confirmClear) return;
+
+    setClearingAllPredictions(true);
+    try {
+      const res = await fetch('/api/admin/clear-predictions', { method: 'POST' });
+      const data = await res.json();
+      if (data.success) {
+        alert("All user predictions have been successfully deleted from the database!");
+      } else {
+        alert(`Failed to delete predictions: ${data.error}`);
+      }
+    } catch (e: any) {
+      alert(`Error: ${e.message}`);
+    } finally {
+      setClearingAllPredictions(false);
+    }
+  };
 
   const currentMatch = matches.find(m => m.id === selectedMatchId);
   const getTeamName = (id: number) => teams.find(t => t.id === id)?.name || 'Unknown';
@@ -593,6 +616,25 @@ export default function AdminPage() {
             <span>Force API Sync</span>
           </button>
         </header>
+
+        {/* DANGER ZONE / SYSTEM ACTIONS */}
+        <div className="bg-red-500/10 border-3 border-black p-5 rounded-2xl shadow-[4px_4px_0px_#000] flex flex-col md:flex-row items-center justify-between gap-4 text-left">
+          <div>
+            <h4 className="text-xs font-black text-red-500 uppercase tracking-wider flex items-center gap-1.5 font-mono">
+              <AlertTriangle className="w-4 h-4" /> Danger Zone / Database Reset
+            </h4>
+            <p className="text-[10px] text-zinc-400 font-bold mt-1 max-w-xl font-mono">
+              Fully erase all user predictions from the Supabase database. This will reset the prediction history of all users.
+            </p>
+          </div>
+          <button
+            onClick={handleClearAllPredictions}
+            disabled={clearingAllPredictions}
+            className="shrink-0 px-4 py-2.5 rounded-xl bg-red-600 hover:bg-red-700 text-white border-2 border-black font-black text-xs tracking-wider uppercase transition-all shadow-[2.5px_2.5px_0px_#000] hover:translate-x-[-1.5px] hover:translate-y-[-1.5px] hover:shadow-[4px_4px_0px_#000] active:translate-x-[1px] active:translate-y-[1px] active:shadow-[1px_1px_0px_#000] flex items-center gap-2 cursor-pointer disabled:opacity-50 font-mono"
+          >
+            {clearingAllPredictions ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <><Trash2 className="w-3.5 h-3.5" /> Erase All Predictions</>}
+          </button>
+        </div>
 
         {loadingData ? (
           <p className="text-center font-black animate-pulse text-zinc-400 py-24">Connecting to Database...</p>
