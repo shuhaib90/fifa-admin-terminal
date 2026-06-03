@@ -3,7 +3,11 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
 import { initialMatches, Match, Team } from '@/lib/data';
-import { Sliders, RefreshCw, Send, Plus, Award, AlertTriangle, Play, Loader2, RotateCcw, XCircle } from 'lucide-react';
+import { 
+  Sliders, RefreshCw, Send, Plus, Award, AlertTriangle, 
+  Play, Loader2, RotateCcw, XCircle, Users, BarChart3, 
+  TrendingUp, Award as BadgeIcon, DollarSign, Activity, Flame, ShieldAlert
+} from 'lucide-react';
 
 interface DBMarket {
   id: string;
@@ -19,10 +23,22 @@ interface DBMarket {
   }[];
 }
 
+interface DBUser {
+  id: string;
+  username: string;
+  createdAt: string;
+  balance: number;
+  profit: number;
+  winRate: number;
+  streak: number;
+  level: string;
+}
+
 export default function AdminPage() {
+  const [activeSidebar, setActiveSidebar] = useState<'markets' | 'users' | 'analytics'>('markets');
   const [matches, setMatches] = useState<any[]>([]);
   const [teams, setTeams] = useState<any[]>([]);
-  const [loadingMatches, setLoadingMatches] = useState<boolean>(true);
+  const [loadingData, setLoadingData] = useState<boolean>(true);
 
   // Score Overrides State
   const [selectedMatchId, setSelectedMatchId] = useState<number>(0);
@@ -30,13 +46,6 @@ export default function AdminPage() {
   const [awayScoreInput, setAwayScoreInput] = useState<number>(0);
   const [matchStatus, setMatchStatus] = useState<'scheduled' | 'live' | 'finished'>('scheduled');
   const [matchMinute, setMatchMinute] = useState<number>(45);
-
-  // New Event Forms
-  const [eventType, setEventType] = useState<'goal' | 'yellow' | 'red' | 'sub'>('goal');
-  const [eventTime, setEventTime] = useState<number>(15);
-  const [eventDetail, setEventDetail] = useState<string>('');
-  const [eventAssist, setEventAssist] = useState<string>('');
-  const [eventTeamId, setEventTeamId] = useState<number>(0);
 
   // Create Custom Prediction Market State
   const [customQuestion, setCustomQuestion] = useState<string>('');
@@ -55,13 +64,25 @@ export default function AdminPage() {
   const [reopeningMarket, setReopeningMarket] = useState<boolean>(false);
   const [loadingMarkets, setLoadingMarkets] = useState<boolean>(false);
 
+  // Users Management State
+  const [usersList, setUsersList] = useState<DBUser[]>([]);
+  const [userSearch, setUserSearch] = useState<string>('');
+  const [loadingUsers, setLoadingUsers] = useState<boolean>(false);
+  const [selectedUserId, setSelectedUserId] = useState<string>('');
+  const [creditAmount, setCreditAmount] = useState<number>(100);
+  const [debitAmount, setDebitAmount] = useState<number>(100);
+  const [adjustingBalance, setAdjustingBalance] = useState<boolean>(false);
+
+  // Sync state
+  const [syncingApi, setSyncingApi] = useState<boolean>(false);
+
   const currentMatch = matches.find(m => m.id === selectedMatchId);
   const getTeamName = (id: number) => teams.find(t => t.id === id)?.name || 'Unknown';
   const getTeamFlag = (id: number) => teams.find(t => t.id === id)?.flag_url || '🏳️';
 
   // Fetch matches, teams, and markets
   const fetchData = async () => {
-    setLoadingMatches(true);
+    setLoadingData(true);
     try {
       const { data: matchData } = await supabase.from('matches').select('*').order('kickoff_time', { ascending: true });
       const { data: teamData } = await supabase.from('teams').select('*');
@@ -75,12 +96,11 @@ export default function AdminPage() {
         setAwayScoreInput(matchData[0].away_score || 0);
         setMatchStatus(matchData[0].status || 'scheduled');
         setMatchMinute(matchData[0].minute || 45);
-        setEventTeamId(matchData[0].home_team_id);
       }
     } catch (e) {
       console.error('Failed to load data', e);
     } finally {
-      setLoadingMatches(false);
+      setLoadingData(false);
     }
   };
 
@@ -99,10 +119,34 @@ export default function AdminPage() {
     }
   };
 
+  const fetchUsers = async () => {
+    setLoadingUsers(true);
+    try {
+      const res = await fetch('/api/admin/users');
+      const data = await res.json();
+      if (data.success) {
+        setUsersList(data.users || []);
+        if (data.users && data.users.length > 0 && !selectedUserId) {
+          setSelectedUserId(data.users[0].id);
+        }
+      }
+    } catch (e) {
+      console.error('Failed to load users', e);
+    } finally {
+      setLoadingUsers(false);
+    }
+  };
+
   useEffect(() => {
     fetchData();
     fetchMarketsList();
   }, []);
+
+  useEffect(() => {
+    if (activeSidebar === 'users') {
+      fetchUsers();
+    }
+  }, [activeSidebar]);
 
   // Update selected market on tab or markets list change
   useEffect(() => {
@@ -128,7 +172,6 @@ export default function AdminPage() {
       setAwayScoreInput(m.away_score || 0);
       setMatchStatus(m.status || 'scheduled');
       setMatchMinute(m.minute || 45);
-      setEventTeamId(m.home_team_id);
     }
   };
 
@@ -163,57 +206,112 @@ export default function AdminPage() {
     }
   };
 
-  const handleAddEvent = async () => {
-    if (!eventDetail.trim()) {
-      alert("Please provide match event details!");
-      return;
-    }
+  // Quick Match simulator actions
+  const handleQuickSimulator = async (action: 'goal_home' | 'goal_away' | 'yellow_home' | 'yellow_away' | 'red_home' | 'red_away' | 'end_match') => {
+    const matchToUpdate = matches.find(m => m.id === selectedMatchId);
+    if (!matchToUpdate) return;
 
     try {
-      // Append event to JSONB array in Supabase matches
-      const matchToUpdate = matches.find(m => m.id === selectedMatchId);
-      if (!matchToUpdate) return;
+      let nextHomeScore = homeScoreInput;
+      let nextAwayScore = awayScoreInput;
+      let nextStatus = matchStatus;
+      let details = '';
+      let type: 'goal' | 'card' | 'sub' = 'goal';
 
+      if (action === 'goal_home') {
+        nextHomeScore += 1;
+        setHomeScoreInput(nextHomeScore);
+        details = 'Goal for Home Team';
+        type = 'goal';
+      } else if (action === 'goal_away') {
+        nextAwayScore += 1;
+        setAwayScoreInput(nextAwayScore);
+        details = 'Goal for Away Team';
+        type = 'goal';
+      } else if (action === 'yellow_home') {
+        details = 'Yellow Card for Home Team';
+        type = 'card';
+      } else if (action === 'yellow_away') {
+        details = 'Yellow Card for Away Team';
+        type = 'card';
+      } else if (action === 'red_home') {
+        details = 'Red Card for Home Team';
+        type = 'card';
+      } else if (action === 'red_away') {
+        details = 'Red Card for Away Team';
+        type = 'card';
+      } else if (action === 'end_match') {
+        nextStatus = 'finished';
+        setMatchStatus('finished');
+      }
+
+      // Log the event in matches
       const newEvent = {
-        time: eventTime,
-        type: eventType,
-        team_id: eventTeamId,
-        detail: eventDetail.trim(),
-        assist: eventAssist.trim() || undefined
+        time: matchMinute,
+        type,
+        team_id: action.includes('home') ? matchToUpdate.home_team_id : matchToUpdate.away_team_id,
+        detail: details || 'Match Simulation Update',
       };
 
       const updatedEvents = [...(matchToUpdate.events || []), newEvent];
 
-      // Update home/away score automatically if it's a goal
-      let nextHomeScore = homeScoreInput;
-      let nextAwayScore = awayScoreInput;
-      if (eventType === 'goal') {
-        if (eventTeamId === matchToUpdate.home_team_id) {
-          nextHomeScore += 1;
-          setHomeScoreInput(nextHomeScore);
-        } else {
-          nextAwayScore += 1;
-          setAwayScoreInput(nextAwayScore);
-        }
-      }
-
-      const { error } = await supabase
-        .from('matches')
-        .update({
-          events: updatedEvents,
-          home_score: nextHomeScore,
-          away_score: nextAwayScore
+      // Call API
+      const res = await fetch('/api/admin/override-match', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          matchId: selectedMatchId,
+          homeScore: nextHomeScore,
+          awayScore: nextAwayScore,
+          status: nextStatus,
+          minute: matchMinute
         })
-        .eq('id', selectedMatchId);
+      });
+      const data = await res.json();
+      if (data.success) {
+        // Also update events in matches table
+        await supabase
+          .from('matches')
+          .update({ events: updatedEvents })
+          .eq('id', selectedMatchId);
 
-      if (error) throw error;
-
-      alert(`Match event logged successfully!`);
-      setEventDetail('');
-      setEventAssist('');
-      await fetchData();
+        alert(`Simulation: "${details || 'Status set to Finished'}" executed!`);
+        await fetchData();
+        await fetchMarketsList();
+      } else {
+        alert(`Failed to simulate event: ${data.error}`);
+      }
     } catch (e: any) {
-      alert(`Failed to log match event: ${e.message}`);
+      alert(`Simulation failed: ${e.message}`);
+    }
+  };
+
+  // Adjust User Balance form submit
+  const handleAdjustBalance = async (action: 'credit' | 'debit' | 'reset', val?: number) => {
+    if (!selectedUserId) return;
+    setAdjustingBalance(true);
+
+    try {
+      const res = await fetch('/api/admin/users', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId: selectedUserId,
+          action,
+          amount: val || 0
+        })
+      });
+      const data = await res.json();
+      if (data.success) {
+        alert(`Wallet balance successfully adjusted! New balance: ${data.newBalance.toFixed(2)} WCX`);
+        await fetchUsers();
+      } else {
+        alert(`Failed to adjust wallet balance: ${data.error}`);
+      }
+    } catch (e: any) {
+      alert(`Error adjusting wallet balance: ${e.message}`);
+    } finally {
+      setAdjustingBalance(false);
     }
   };
 
@@ -377,6 +475,26 @@ export default function AdminPage() {
     }
   };
 
+  // Trigger manual API Sync on main app
+  const handleApiForceSync = async () => {
+    setSyncingApi(true);
+    try {
+      const res = await fetch('/api/admin/sync');
+      const data = await res.json();
+      if (data.success) {
+        alert(`Live Sync triggered successfully!\nMatches updated: ${data.syncStats?.matchesUpserted || 0}\nPrediction markets created: ${data.syncStats?.marketsCreated || 0}`);
+        await fetchData();
+        await fetchMarketsList();
+      } else {
+        alert(`Sync failed: ${data.error}`);
+      }
+    } catch (e: any) {
+      alert(`Error running Sync: ${e.message}`);
+    } finally {
+      setSyncingApi(false);
+    }
+  };
+
   const handleMarketSelectChange = (marketId: string) => {
     setSelectedMarketId(marketId);
     const mkt = allMarkets.find(m => m.id === marketId);
@@ -389,321 +507,641 @@ export default function AdminPage() {
 
   const currentTabMarkets = allMarkets.filter(m => m.status === adminMarketTab);
   const selectedMarket = allMarkets.find(m => m.id === selectedMarketId);
+  const selectedUser = usersList.find(u => u.id === selectedUserId);
+
+  // Platform Analytics computation
+  const totalUsers = usersList.length || 1;
+  const totalTokenSupply = usersList.reduce((sum, u) => sum + u.balance, 0);
+  const totalPoolStakes = allMarkets.reduce((sum, m) => sum + Number(m.total_pool || 0), 0);
+  const openMarketsCount = allMarkets.filter(m => m.status === 'open').length;
+  const closedMarketsCount = allMarkets.filter(m => m.status === 'closed').length;
+  const resolvedMarketsCount = allMarkets.filter(m => m.status === 'resolved').length;
+  const cancelledMarketsCount = allMarkets.filter(m => m.status === 'cancelled').length;
 
   return (
-    <div className="min-h-screen bg-zinc-950 text-white p-4 md:p-8 max-w-6xl mx-auto space-y-8 font-mono">
+    <div className="min-h-screen bg-zinc-950 text-white flex flex-col md:flex-row font-mono">
       
-      {/* HEADER */}
-      <header className="space-y-4 text-left border-b-4 border-black pb-6">
-        <h1 
-          className="text-4xl font-black text-white tracking-tight uppercase"
-          style={{ textShadow: '3px 3px 0px #000' }}
-        >
-          WorldCupX <span className="text-[#FF3366]" style={{ WebkitTextStroke: '1.2px #000' }}>Admin Terminal</span>
-        </h1>
-        <p className="text-xs text-zinc-400 font-bold bg-zinc-900 border-2 border-black p-4 rounded-xl shadow-[3px_3px_0px_#000]">
-          Centralized terminal to override matches, simulate in-play match events, launch sandbox markets, and settle prediction contracts.
-        </p>
-      </header>
+      {/* 1. SIDEBAR NAVIGATION */}
+      <aside className="w-full md:w-64 bg-zinc-900 border-b-4 md:border-b-0 md:border-r-4 border-black p-6 flex flex-col justify-between shrink-0 text-left">
+        <div className="space-y-8">
+          <div onClick={() => window.location.reload()} className="cursor-pointer">
+            <h1 className="text-2xl font-black tracking-tight text-white uppercase" style={{ textShadow: '2px 2px 0px #000' }}>
+              WCX <span className="text-[#FF3366]">Terminal</span>
+            </h1>
+            <span className="text-[9px] text-[#B6FF3B] font-black uppercase tracking-widest block mt-1">Admin Console</span>
+          </div>
 
-      {loadingMatches ? (
-        <p className="text-center font-black animate-pulse text-zinc-400 py-24">Connecting to Supabase Database...</p>
-      ) : (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 text-left">
-          
-          {/* PANEL 1: SCORE OVERRIDES */}
-          <div className="bg-zinc-900 border-3 border-black rounded-2xl p-6 space-y-6 shadow-[5px_5px_0px_#000]">
-            <h3 className="font-black text-white text-sm uppercase tracking-wider flex items-center gap-2 border-b-2 border-black pb-3 text-[#FF3366]">
-              <Sliders className="w-5 h-5" /> Score Override & Live Simulator
-            </h3>
+          <nav className="flex flex-col gap-2">
+            {[
+              { id: 'markets', label: 'Market Control', icon: Sliders },
+              { id: 'users', label: 'User Managers', icon: Users },
+              { id: 'analytics', label: 'Platform Stats', icon: BarChart3 }
+            ].map(item => {
+              const isActive = activeSidebar === item.id;
+              const Icon = item.icon;
+              return (
+                <button
+                  key={item.id}
+                  onClick={() => setActiveSidebar(item.id as any)}
+                  className={`flex items-center gap-3 px-4 py-3 rounded-xl text-xs font-black uppercase tracking-wider transition-all border-2 border-black ${
+                    isActive 
+                      ? 'bg-[#FF3366] text-white shadow-[3px_3px_0px_#000] translate-x-[-1px] translate-y-[-1px]' 
+                      : 'bg-zinc-950 text-zinc-450 hover:text-white border-transparent'
+                  }`}
+                >
+                  <Icon className="w-4 h-4" />
+                  <span>{item.label}</span>
+                </button>
+              );
+            })}
+          </nav>
+        </div>
 
-            <div className="space-y-2">
-              <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Select Match Card</label>
-              <select 
-                value={selectedMatchId}
-                onChange={(e) => handleSelectMatch(parseInt(e.target.value))}
-                className="w-full bg-zinc-950 border-2 border-black rounded-xl px-3.5 py-2.5 text-xs text-white font-black outline-none focus:border-[#FF3366] shadow-[2px_2px_0px_#000] transition-all"
-              >
-                {matches.map(m => (
-                  <option key={m.id} value={m.id} className="bg-zinc-950 text-white">
-                    Match #{m.id} ({getTeamName(m.home_team_id)} vs {getTeamName(m.away_team_id)} - Status: {String(m.status).toUpperCase()})
-                  </option>
-                ))}
-              </select>
-            </div>
+        <div className="pt-8 border-t border-zinc-800 space-y-4 hidden md:block">
+          <button 
+            onClick={handleApiForceSync}
+            disabled={syncingApi}
+            className="w-full flex items-center justify-center gap-1.5 py-2.5 px-3 rounded-xl bg-zinc-950 border-2 border-black hover:border-[#B6FF3B] text-[10px] text-zinc-400 hover:text-[#B6FF3B] shadow-[2px_2px_0px_#000] transition-all disabled:opacity-50 font-black uppercase"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${syncingApi ? 'animate-spin' : ''}`} />
+            <span>{syncingApi ? 'Syncing...' : 'Force API Sync'}</span>
+          </button>
+          <span className="text-[8px] text-zinc-650 font-bold block text-center uppercase">v1.2 Sandbox Settle</span>
+        </div>
+      </aside>
 
-            {currentMatch && (
-              <>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2 text-center bg-zinc-950 p-4 rounded-xl border-2 border-black shadow-[2.5px_2.5px_0px_#000]">
-                    <span className="text-lg block">{getTeamFlag(currentMatch.home_team_id)}</span>
-                    <label className="block text-[8px] font-black text-zinc-400 uppercase truncate">{getTeamName(currentMatch.home_team_id)} Score</label>
-                    <input 
-                      type="number" 
-                      min="0"
-                      value={homeScoreInput}
-                      onChange={(e) => setHomeScoreInput(parseInt(e.target.value) || 0)}
-                      className="w-16 h-10 text-center rounded-xl bg-zinc-900 border-2 border-black font-black text-white text-md focus:border-[#FF3366] outline-none mt-1 shadow-[2px_2px_0px_#000]"
-                    />
-                  </div>
-                  
-                  <div className="space-y-2 text-center bg-zinc-950 p-4 rounded-xl border-2 border-black shadow-[2.5px_2.5px_0px_#000]">
-                    <span className="text-lg block">{getTeamFlag(currentMatch.away_team_id)}</span>
-                    <label className="block text-[8px] font-black text-zinc-400 uppercase truncate">{getTeamName(currentMatch.away_team_id)} Score</label>
-                    <input 
-                      type="number" 
-                      min="0"
-                      value={awayScoreInput}
-                      onChange={(e) => setAwayScoreInput(parseInt(e.target.value) || 0)}
-                      className="w-16 h-10 text-center rounded-xl bg-zinc-900 border-2 border-black font-black text-white text-md focus:border-[#FF3366] outline-none mt-1 shadow-[2px_2px_0px_#000]"
-                    />
-                  </div>
-                </div>
+      {/* 2. MAIN DASHBOARD CONTENT */}
+      <main className="flex-1 p-4 md:p-8 max-w-5xl mx-auto w-full space-y-6 overflow-y-auto">
+        
+        {/* HEADER BAR */}
+        <header className="flex flex-col sm:flex-row justify-between sm:items-center gap-4 bg-zinc-900 border-3 border-black rounded-2xl p-5 shadow-[4px_4px_0px_#000] text-left">
+          <div>
+            <h2 className="text-lg font-black text-white uppercase leading-none">
+              {activeSidebar === 'markets' ? 'Markets Dashboard' : activeSidebar === 'users' ? 'User Ecosystem Controller' : 'Ecosystem Insights'}
+            </h2>
+            <span className="text-[9px] text-zinc-400 font-black uppercase tracking-widest mt-1 block">
+              {activeSidebar === 'markets' ? 'Control scores & resolve payouts' : activeSidebar === 'users' ? 'Adjust virtual credits & follow states' : 'Overall platform supply & trade volumes'}
+            </span>
+          </div>
 
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Match Status</label>
+          <button 
+            onClick={handleApiForceSync}
+            disabled={syncingApi}
+            className="sm:hidden w-full flex items-center justify-center gap-1.5 py-2.5 px-3 rounded-xl bg-zinc-950 border-2 border-black text-[10px] text-zinc-400 shadow-[2px_2px_0px_#000] font-black uppercase"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${syncingApi ? 'animate-spin' : ''}`} />
+            <span>Force API Sync</span>
+          </button>
+        </header>
+
+        {loadingData ? (
+          <p className="text-center font-black animate-pulse text-zinc-400 py-24">Connecting to Database...</p>
+        ) : (
+          <>
+            {/* VIEW 1: MARKETS CONTROL */}
+            {activeSidebar === 'markets' && (
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 text-left">
+                
+                {/* Score override simulator */}
+                <div className="bg-zinc-900 border-3 border-black rounded-2xl p-6 space-y-5 shadow-[5px_5px_0px_#000]">
+                  <h3 className="font-black text-white text-xs uppercase tracking-wider flex items-center gap-2 border-b-2 border-black pb-2.5 text-[#FF3366]">
+                    <Sliders className="w-4.5 h-4.5" /> Score Override & Live Simulator
+                  </h3>
+
+                  <div className="space-y-1.5">
+                    <label className="text-[9px] font-black text-zinc-400 uppercase tracking-widest">Select Match Card</label>
                     <select 
-                      value={matchStatus}
-                      onChange={(e) => setMatchStatus(e.target.value as any)}
-                      className="w-full bg-zinc-950 border-2 border-black rounded-xl px-3.5 py-2.5 text-xs text-white font-black outline-none focus:border-[#FF3366] shadow-[2px_2px_0px_#000] transition-all"
+                      value={selectedMatchId}
+                      onChange={(e) => handleSelectMatch(parseInt(e.target.value))}
+                      className="w-full bg-zinc-950 border-2 border-black rounded-xl px-3 py-2 text-xs text-white font-black outline-none focus:border-[#FF3366] shadow-[2px_2px_0px_#000] transition-all"
                     >
-                      <option value="scheduled">Scheduled</option>
-                      <option value="live">Live</option>
-                      <option value="finished">Finished</option>
+                      {matches.map(m => (
+                        <option key={m.id} value={m.id} className="bg-zinc-950 text-white">
+                          Match #{m.id} ({getTeamName(m.home_team_id)} vs {getTeamName(m.away_team_id)} - Status: {String(m.status).toUpperCase()})
+                        </option>
+                      ))}
                     </select>
                   </div>
+
+                  {currentMatch && (
+                    <>
+                      {/* Match Scoreboard inputs */}
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="space-y-1.5 text-center bg-zinc-950 p-3 rounded-xl border-2 border-black shadow-[2px_2px_0px_#000]">
+                          <span className="text-md block">{getTeamFlag(currentMatch.home_team_id)}</span>
+                          <label className="block text-[8px] font-black text-zinc-400 uppercase truncate">{getTeamName(currentMatch.home_team_id)}</label>
+                          <input 
+                            type="number" 
+                            min="0"
+                            value={homeScoreInput}
+                            onChange={(e) => setHomeScoreInput(parseInt(e.target.value) || 0)}
+                            className="w-12 h-9 text-center rounded-xl bg-zinc-900 border-2 border-black font-black text-white text-sm focus:border-[#FF3366] outline-none mt-1 shadow-[1.5px_1.5px_0px_#000]"
+                          />
+                        </div>
+                        
+                        <div className="space-y-1.5 text-center bg-zinc-950 p-3 rounded-xl border-2 border-black shadow-[2px_2px_0px_#000]">
+                          <span className="text-md block">{getTeamFlag(currentMatch.away_team_id)}</span>
+                          <label className="block text-[8px] font-black text-zinc-400 uppercase truncate">{getTeamName(currentMatch.away_team_id)}</label>
+                          <input 
+                            type="number" 
+                            min="0"
+                            value={awayScoreInput}
+                            onChange={(e) => setAwayScoreInput(parseInt(e.target.value) || 0)}
+                            className="w-12 h-9 text-center rounded-xl bg-zinc-900 border-2 border-black font-black text-white text-sm focus:border-[#FF3366] outline-none mt-1 shadow-[1.5px_1.5px_0px_#000]"
+                          />
+                        </div>
+                      </div>
+
+                      {/* Status select */}
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="space-y-1.5">
+                          <label className="text-[9px] font-black text-zinc-400 uppercase tracking-widest">Match Status</label>
+                          <select 
+                            value={matchStatus}
+                            onChange={(e) => setMatchStatus(e.target.value as any)}
+                            className="w-full bg-zinc-950 border-2 border-black rounded-xl px-3 py-2 text-xs text-white font-black outline-none focus:border-[#FF3366] shadow-[1.5px_1.5px_0px_#000] transition-all"
+                          >
+                            <option value="scheduled">Scheduled</option>
+                            <option value="live">Live</option>
+                            <option value="finished">Finished</option>
+                          </select>
+                        </div>
+                        
+                        <div className="space-y-1.5">
+                          <label className="text-[9px] font-black text-zinc-400 uppercase tracking-widest">Match Minute</label>
+                          <input 
+                            type="number" 
+                            min="1"
+                            max="120"
+                            value={matchMinute}
+                            onChange={(e) => setMatchMinute(parseInt(e.target.value) || 45)}
+                            className="w-full bg-zinc-950 border-2 border-black rounded-xl px-3 py-1.5 text-xs font-black text-white outline-none focus:border-[#FF3366] shadow-[1.5px_1.5px_0px_#000] transition-all"
+                          />
+                        </div>
+                      </div>
+
+                      <button 
+                        onClick={handleUpdateScores}
+                        className="w-full bg-[#FF3366] text-white border-2 border-black font-black text-xs tracking-wider uppercase py-3 rounded-xl shadow-[3px_3px_0px_#000] hover:translate-x-[-1.5px] hover:translate-y-[-1.5px] hover:shadow-[4.5px_4.5px_0px_#000] active:translate-x-[1px] active:translate-y-[1px] active:shadow-[1px_1px_0px_#000] flex items-center justify-center gap-1.5 cursor-pointer transition-all"
+                      >
+                        <RefreshCw className="w-3.5 h-3.5" /> Save Match Status & Score
+                      </button>
+
+                      {/* QUICK SIMULATOR PANEL */}
+                      <div className="border-t border-zinc-800 pt-4 space-y-3">
+                        <label className="text-[9px] font-black text-zinc-400 uppercase tracking-widest block">Quick Simulation Actions</label>
+                        <div className="grid grid-cols-2 gap-2.5">
+                          <button 
+                            onClick={() => handleQuickSimulator('goal_home')}
+                            className="py-2 px-3 bg-zinc-950 border border-black hover:border-emerald-400 text-[10px] text-zinc-350 hover:text-white rounded-lg flex items-center justify-center gap-1 shadow transition-all uppercase font-black"
+                          >
+                            ⚽ +1 Home Goal
+                          </button>
+                          <button 
+                            onClick={() => handleQuickSimulator('goal_away')}
+                            className="py-2 px-3 bg-zinc-950 border border-black hover:border-emerald-400 text-[10px] text-zinc-350 hover:text-white rounded-lg flex items-center justify-center gap-1 shadow transition-all uppercase font-black"
+                          >
+                            ⚽ +1 Away Goal
+                          </button>
+                          <button 
+                            onClick={() => handleQuickSimulator('yellow_home')}
+                            className="py-2 px-3 bg-zinc-950 border border-black hover:border-yellow-400 text-[10px] text-zinc-350 hover:text-white rounded-lg flex items-center justify-center gap-1 shadow transition-all uppercase font-black"
+                          >
+                            🟨 Home Card
+                          </button>
+                          <button 
+                            onClick={() => handleQuickSimulator('yellow_away')}
+                            className="py-2 px-3 bg-zinc-950 border border-black hover:border-yellow-400 text-[10px] text-zinc-350 hover:text-white rounded-lg flex items-center justify-center gap-1 shadow transition-all uppercase font-black"
+                          >
+                            🟨 Away Card
+                          </button>
+                          <button 
+                            onClick={() => handleQuickSimulator('red_home')}
+                            className="py-2 px-3 bg-zinc-950 border border-black hover:border-red-400 text-[10px] text-zinc-350 hover:text-white rounded-lg flex items-center justify-center gap-1 shadow transition-all uppercase font-black"
+                          >
+                            🟥 Home Red Card
+                          </button>
+                          <button 
+                            onClick={() => handleQuickSimulator('red_away')}
+                            className="py-2 px-3 bg-zinc-950 border border-black hover:border-red-400 text-[10px] text-zinc-350 hover:text-white rounded-lg flex items-center justify-center gap-1 shadow transition-all uppercase font-black"
+                          >
+                            🟥 Away Red Card
+                          </button>
+                        </div>
+                        <button 
+                          onClick={() => handleQuickSimulator('end_match')}
+                          className="w-full py-2 bg-zinc-950 border-2 border-black hover:border-[#FF3366] text-[#FF3366] hover:text-white rounded-xl text-[10px] font-black uppercase transition-all shadow-[2px_2px_0px_#000]"
+                        >
+                          ⏱️ End Match (Trigger Settlements)
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </div>
+
+                {/* Create Custom Prediction Market */}
+                <div className="bg-zinc-900 border-3 border-black rounded-2xl p-6 space-y-5 shadow-[5px_5px_0px_#000]">
+                  <h3 className="font-black text-white text-xs uppercase tracking-wider flex items-center gap-2 border-b-2 border-black pb-2.5 text-[#B6FF3B]">
+                    <Plus className="w-4.5 h-4.5" /> Deploy Prediction Market
+                  </h3>
+
+                  <form onSubmit={handleCreateCustomMarket} className="space-y-4">
+                    <div className="space-y-1.5">
+                      <label className="text-[9px] font-black text-zinc-400 uppercase tracking-widest">Market Question</label>
+                      <input 
+                        type="text"
+                        required
+                        placeholder="e.g. Will Mbappe score a header in the semi-final?"
+                        value={customQuestion}
+                        onChange={(e) => setCustomQuestion(e.target.value)}
+                        className="w-full bg-zinc-950 border-2 border-black rounded-xl px-3.5 py-2 text-xs font-black text-white outline-none focus:border-[#B6FF3B] shadow-[1.5px_1.5px_0px_#000]"
+                      />
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-1.5">
+                        <label className="text-[9px] font-black text-zinc-400 uppercase tracking-widest">Category</label>
+                        <select 
+                          value={customCategory}
+                          onChange={(e) => setCustomCategory(e.target.value)}
+                          className="w-full bg-zinc-950 border-2 border-black rounded-xl px-3 py-2 text-xs text-white font-black outline-none focus:border-[#B6FF3B] shadow-[1.5px_1.5px_0px_#000] transition-all"
+                        >
+                          <option value="custom">Custom Specials</option>
+                          <option value="player_special">Player Performance</option>
+                          <option value="match_winner">Match Outcome</option>
+                          <option value="total_goals">Goals</option>
+                        </select>
+                      </div>
+
+                      <div className="space-y-1.5">
+                        <label className="text-[9px] font-black text-zinc-400 uppercase tracking-widest">Match Ref (Optional)</label>
+                        <select 
+                          value={customMatchRef}
+                          onChange={(e) => setCustomMatchRef(e.target.value)}
+                          className="w-full bg-zinc-950 border-2 border-black rounded-xl px-3 py-2 text-xs text-white font-black outline-none focus:border-[#B6FF3B] shadow-[1.5px_1.5px_0px_#000] transition-all"
+                        >
+                          <option value="">None / General Tournament</option>
+                          {matches.map(m => (
+                            <option key={m.id} value={m.id}>
+                              Match #{m.id} ({getTeamName(m.home_team_id)} vs {getTeamName(m.away_team_id)})
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <label className="text-[9px] font-black text-zinc-400 uppercase tracking-widest">Outcomes (Comma-separated)</label>
+                      <input 
+                        type="text"
+                        required
+                        placeholder="e.g. Yes, No, Cancelled"
+                        value={customOptionsText}
+                        onChange={(e) => setCustomOptionsText(e.target.value)}
+                        className="w-full bg-zinc-950 border-2 border-black rounded-xl px-3.5 py-2 text-xs font-black text-white outline-none focus:border-[#B6FF3B] shadow-[1.5px_1.5px_0px_#000]"
+                      />
+                    </div>
+
+                    <button 
+                      type="submit"
+                      disabled={creatingMarket}
+                      className="w-full bg-[#B6FF3B] text-black border-2 border-black font-black text-xs tracking-wider uppercase py-3 rounded-xl shadow-[3px_3px_0px_#000] hover:translate-x-[-1.5px] hover:translate-y-[-1.5px] hover:shadow-[4.5px_4.5px_0px_#000] active:translate-x-[1px] active:translate-y-[1px] active:shadow-[1px_1px_0px_#000] flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50 transition-all"
+                    >
+                      {creatingMarket ? <Loader2 className="w-4 h-4 animate-spin" /> : <><Send className="w-3.5 h-3.5" /> Deploy Custom Prediction</>}
+                    </button>
+                  </form>
+                </div>
+
+                {/* Settle & Manage prediction Markets */}
+                <div className="bg-zinc-900 border-3 border-black rounded-2xl p-6 space-y-6 lg:col-span-2 shadow-[5px_5px_0px_#000]">
+                  <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-3 border-b-2 border-black pb-3">
+                    <h3 className="font-black text-white text-xs uppercase tracking-wider flex items-center gap-2 text-yellow-450">
+                      <Award className="w-4.5 h-4.5" /> Manage & Settle Predictions
+                    </h3>
+                    
+                    <div className="flex gap-1 overflow-x-auto">
+                      {(['open', 'closed', 'resolved', 'cancelled'] as const).map(tabName => (
+                        <button
+                          key={tabName}
+                          onClick={() => setAdminMarketTab(tabName)}
+                          className={`px-3 py-1 rounded-lg text-[10px] font-black uppercase border-2 border-black transition-all ${
+                            adminMarketTab === tabName
+                              ? 'bg-yellow-400 text-black shadow-[1.5px_1.5px_0px_#000]'
+                              : 'bg-zinc-950 text-zinc-400 hover:text-white border-zinc-800'
+                          }`}
+                        >
+                          {tabName}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {loadingMarkets ? (
+                    <p className="text-xs text-zinc-500 animate-pulse text-center py-6 font-bold">Loading prediction contracts...</p>
+                  ) : currentTabMarkets.length === 0 ? (
+                    <p className="text-xs text-zinc-500 py-8 text-center border-2 border-dashed border-black rounded-xl bg-zinc-950 font-bold">
+                      No {adminMarketTab} prediction markets found.
+                    </p>
+                  ) : (
+                    <div className="space-y-6">
+                      <div className="space-y-2">
+                        <label className="text-[9px] font-black text-zinc-400 uppercase tracking-widest">Select Prediction Contract</label>
+                        <select 
+                          value={selectedMarketId}
+                          onChange={(e) => handleMarketSelectChange(e.target.value)}
+                          className="w-full bg-zinc-950 border-2 border-black rounded-xl px-3.5 py-2.5 text-xs text-white font-black outline-none focus:border-yellow-400 shadow-[2px_2px_0px_#000] transition-all"
+                        >
+                          {currentTabMarkets.map(m => (
+                            <option key={m.id} value={m.id} className="bg-zinc-950 text-white">
+                              [{m.category.toUpperCase()}] {m.question} (Pool: {m.total_pool.toFixed(0)} tokens)
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      {selectedMarket && (
+                        <>
+                          {(selectedMarket.status === 'open' || selectedMarket.status === 'closed') && (
+                            <form onSubmit={handleSettleMarket} className="space-y-6">
+                              <div className="space-y-3">
+                                <label className="text-[9px] font-black text-zinc-400 uppercase tracking-widest block">Choose Winning Outcome</label>
+                                <div className="flex flex-wrap gap-3">
+                                  {selectedMarket.options.map(opt => (
+                                    <button
+                                      key={opt.id}
+                                      type="button"
+                                      onClick={() => setSelectedWinningOptionId(opt.id)}
+                                      className={`px-4 py-2.5 rounded-xl text-xs font-black border-2 transition-all cursor-pointer ${
+                                        selectedWinningOptionId === opt.id
+                                          ? 'bg-yellow-400 text-black border-black shadow-[2px_2px_0px_#000]'
+                                          : 'bg-zinc-950 border-black text-zinc-400 hover:text-white shadow-[1px_1px_0px_#000]'
+                                      }`}
+                                    >
+                                      {opt.option_name}
+                                    </button>
+                                  ))}
+                                </div>
+                              </div>
+
+                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                <button
+                                  type="submit"
+                                  disabled={settlingMarket}
+                                  className="bg-yellow-400 text-black border-2 border-black font-black text-xs tracking-wider uppercase py-3 rounded-xl shadow-[2.5px_2.5px_0px_#000] flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+                                >
+                                  {settlingMarket ? <Loader2 className="w-4 h-4 animate-spin" /> : <><Play className="w-3.5 h-3.5 fill-current" /> Settle Market</>}
+                                </button>
+
+                                <button
+                                  type="button"
+                                  onClick={handleCancelMarket}
+                                  disabled={cancellingMarket}
+                                  className="bg-red-650 text-white border-2 border-black font-black text-xs tracking-wider uppercase py-3 rounded-xl shadow-[2.5px_2.5px_0px_#000] flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+                                >
+                                  {cancellingMarket ? <Loader2 className="w-4 h-4 animate-spin" /> : <><XCircle className="w-3.5 h-3.5" /> Cancel & Refund</>}
+                                </button>
+                              </div>
+                            </form>
+                          )}
+
+                          {selectedMarket.status === 'resolved' && (
+                            <div className="space-y-4">
+                              <div className="bg-zinc-950 p-4 border-2 border-black rounded-xl text-xs space-y-2 shadow-[2px_2px_0px_#000]">
+                                <p className="font-black text-zinc-400 font-sans">RESOLUTION DETAILS</p>
+                                <p className="font-bold">Winning Option UUID: <span className="text-[#B6FF3B]">{selectedMarket.resolved_option_id}</span></p>
+                              </div>
+
+                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                <button
+                                  type="button"
+                                  onClick={handleReopenMarket}
+                                  disabled={reopeningMarket}
+                                  className="bg-purple-650 text-white border-2 border-black font-black text-xs tracking-wider uppercase py-3 rounded-xl shadow-[2.5px_2.5px_0px_#000] flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+                                >
+                                  {reopeningMarket ? <Loader2 className="w-4 h-4 animate-spin" /> : <><RotateCcw className="w-3.5 h-3.5" /> Reopen Market</>}
+                                </button>
+
+                                <button
+                                  type="button"
+                                  onClick={handleCancelMarket}
+                                  disabled={cancellingMarket}
+                                  className="bg-red-650 text-white border-2 border-black font-black text-xs tracking-wider uppercase py-3 rounded-xl shadow-[2.5px_2.5px_0px_#000] flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+                                >
+                                  {cancellingMarket ? <Loader2 className="w-4 h-4 animate-spin" /> : <><XCircle className="w-3.5 h-3.5" /> Cancel & Refund</>}
+                                </button>
+                              </div>
+                            </div>
+                          )}
+
+                          {selectedMarket.status === 'cancelled' && (
+                            <div className="bg-zinc-950 p-4 border-2 border-black rounded-xl text-center text-xs text-zinc-500 font-bold shadow-[2px_2px_0px_#000]">
+                              This market was cancelled and all stakes have been fully refunded to predictors.
+                            </div>
+                          )}
+                        </>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+              </div>
+            )}
+
+            {/* VIEW 2: USER MANAGEMENT */}
+            {activeSidebar === 'users' && (
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 text-left">
+                
+                {/* Search & Users list */}
+                <div className="lg:col-span-1 bg-zinc-900 border-3 border-black rounded-2xl p-5 space-y-4 shadow-[4px_4px_0px_#000]">
+                  <h3 className="font-black text-white text-xs uppercase tracking-wider border-b-2 border-black pb-2">Users List</h3>
                   
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Match Minute (if Live)</label>
-                    <input 
-                      type="number" 
-                      min="1"
-                      max="120"
-                      value={matchMinute}
-                      onChange={(e) => setMatchMinute(parseInt(e.target.value) || 45)}
-                      className="w-full bg-zinc-950 border-2 border-black rounded-xl px-3.5 py-2 text-xs font-black text-white outline-none focus:border-[#FF3366] shadow-[2px_2px_0px_#000] transition-all"
-                    />
+                  <input 
+                    type="text"
+                    placeholder="Search username..."
+                    value={userSearch}
+                    onChange={(e) => setUserSearch(e.target.value)}
+                    className="w-full bg-zinc-950 border-2 border-black rounded-xl px-3 py-2 text-xs font-black text-white outline-none focus:border-[#FF3366]"
+                  />
+
+                  {loadingUsers ? (
+                    <p className="text-xs text-zinc-500 animate-pulse text-center py-4">Loading users...</p>
+                  ) : usersList.length === 0 ? (
+                    <p className="text-xs text-zinc-500 py-4 text-center">No users registered.</p>
+                  ) : (
+                    <div className="space-y-2.5 max-h-[350px] overflow-y-auto no-scrollbar">
+                      {usersList
+                        .filter(u => u.username.toLowerCase().includes(userSearch.toLowerCase()))
+                        .map(u => (
+                          <div 
+                            key={u.id}
+                            onClick={() => setSelectedUserId(u.id)}
+                            className={`p-3 rounded-xl border-2 border-black transition-all cursor-pointer shadow-[2px_2px_0px_#000] flex justify-between items-center ${
+                              selectedUserId === u.id ? 'bg-[#FF3366] text-white' : 'bg-zinc-950 hover:bg-black'
+                            }`}
+                          >
+                            <div>
+                              <p className="text-xs font-black uppercase">{u.username}</p>
+                              <span className={`text-[8px] font-bold uppercase block mt-0.5 ${selectedUserId === u.id ? 'text-zinc-200' : 'text-zinc-550'}`}>
+                                Level: {u.level} • Streak: {u.streak} 🔥
+                              </span>
+                            </div>
+                            <span className="text-xs font-black">{u.balance.toFixed(0)} WCX</span>
+                          </div>
+                        ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Adjust User balances */}
+                <div className="lg:col-span-2 space-y-6">
+                  {selectedUser ? (
+                    <div className="bg-zinc-900 border-3 border-black rounded-2xl p-6 space-y-6 shadow-[5px_5px_0px_#000]">
+                      <div className="flex justify-between items-center border-b-2 border-black pb-2.5">
+                        <h3 className="font-black text-white text-xs uppercase tracking-wider">
+                          Adjust Wallet: <span className="text-[#FF3366]">{selectedUser.username}</span>
+                        </h3>
+                        <span className="text-[10px] font-black text-[#B6FF3B] uppercase">{selectedUser.balance.toFixed(2)} WCX</span>
+                      </div>
+
+                      {/* User Stats Overview */}
+                      <div className="grid grid-cols-3 gap-3 text-center bg-zinc-950 p-4 border-2 border-black rounded-xl shadow-[2px_2px_0px_#000]">
+                        <div>
+                          <span className="text-[8px] text-zinc-500 font-black uppercase">Net Profits</span>
+                          <p className={`text-xs font-black mt-1 ${selectedUser.profit >= 0 ? 'text-[#B6FF3B]' : 'text-red-400'}`}>
+                            {selectedUser.profit >= 0 ? '+' : ''}{selectedUser.profit.toFixed(0)}
+                          </p>
+                        </div>
+                        <div>
+                          <span className="text-[8px] text-zinc-500 font-black uppercase">Rank Tier</span>
+                          <p className="text-xs font-black text-white mt-1 uppercase">{selectedUser.level}</p>
+                        </div>
+                        <div>
+                          <span className="text-[8px] text-zinc-500 font-black uppercase">Signup Date</span>
+                          <p className="text-[9px] font-bold text-zinc-400 mt-1">{new Date(selectedUser.createdAt).toLocaleDateString()}</p>
+                        </div>
+                      </div>
+
+                      {/* Adjust Actions */}
+                      <div className="space-y-4 pt-2">
+                        {/* Credit */}
+                        <div className="flex items-center gap-3 bg-zinc-950 p-3 rounded-xl border border-black">
+                          <div className="flex-1 text-left">
+                            <span className="text-[8px] text-zinc-500 font-black uppercase block">Credit Wallet</span>
+                            <p className="text-[10px] font-bold text-zinc-350">Add free tokens to user wallet</p>
+                          </div>
+                          <input 
+                            type="number"
+                            value={creditAmount}
+                            onChange={(e) => setCreditAmount(parseInt(e.target.value) || 0)}
+                            className="w-20 bg-zinc-900 border-2 border-black rounded-lg text-center font-black text-xs h-8 text-white outline-none"
+                          />
+                          <button 
+                            onClick={() => handleAdjustBalance('credit', creditAmount)}
+                            disabled={adjustingBalance}
+                            className="bg-[#B6FF3B] text-black border border-black font-black text-[10px] px-3.5 h-8 rounded-lg uppercase transition-all shadow-[1.5px_1.5px_0px_#000]"
+                          >
+                            Credit
+                          </button>
+                        </div>
+
+                        {/* Debit */}
+                        <div className="flex items-center gap-3 bg-zinc-950 p-3 rounded-xl border border-black">
+                          <div className="flex-1 text-left">
+                            <span className="text-[8px] text-zinc-500 font-black uppercase block">Debit Wallet</span>
+                            <p className="text-[10px] font-bold text-zinc-350">Deduct tokens from user wallet</p>
+                          </div>
+                          <input 
+                            type="number"
+                            value={debitAmount}
+                            onChange={(e) => setDebitAmount(parseInt(e.target.value) || 0)}
+                            className="w-20 bg-zinc-900 border-2 border-black rounded-lg text-center font-black text-xs h-8 text-white outline-none"
+                          />
+                          <button 
+                            onClick={() => handleAdjustBalance('debit', debitAmount)}
+                            disabled={adjustingBalance}
+                            className="bg-red-500 text-white border border-black font-black text-[10px] px-3.5 h-8 rounded-lg uppercase transition-all shadow-[1.5px_1.5px_0px_#000]"
+                          >
+                            Debit
+                          </button>
+                        </div>
+
+                        {/* Reset Balance */}
+                        <div className="flex items-center justify-between bg-zinc-950 p-3 rounded-xl border border-black">
+                          <div className="text-left">
+                            <span className="text-[8px] text-zinc-550 font-black uppercase block">Reset Wallet Balance</span>
+                            <p className="text-[10px] font-bold text-zinc-400">Revert user credits to default 1,000</p>
+                          </div>
+                          <button 
+                            onClick={() => handleAdjustBalance('reset')}
+                            disabled={adjustingBalance}
+                            className="bg-zinc-900 hover:bg-black border-2 border-black font-black text-[10px] px-4 py-1.5 rounded-lg text-zinc-300 hover:text-white uppercase transition-all shadow-[2px_2px_0px_#000]"
+                          >
+                            Reset to 1K
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="bg-zinc-900 border-3 border-black rounded-2xl py-20 text-center text-zinc-500 font-bold shadow-[4px_4px_0px_#000]">
+                      Select a user from the list to adjust wallet credits.
+                    </div>
+                  )}
+                </div>
+
+              </div>
+            )}
+
+            {/* VIEW 3: PLATFORM STATS / ANALYTICS */}
+            {activeSidebar === 'analytics' && (
+              <div className="space-y-6 text-left">
+                
+                {/* Summary Widgets Row */}
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                  {[
+                    { label: 'Registered Users', val: totalUsers, icon: Users, color: 'text-indigo-400' },
+                    { label: 'Circulating Tokens', val: `${totalTokenSupply.toFixed(0)} WCX`, icon: DollarSign, color: 'text-emerald-400' },
+                    { label: 'Active Open Pools', val: `${totalPoolStakes.toFixed(0)} WCX`, icon: TrendingUp, color: 'text-cyan-400' },
+                    { label: 'Prediction Contracts', val: allMarkets.length, icon: Activity, color: 'text-rose-400' }
+                  ].map((w, idx) => (
+                    <div key={idx} className="bg-zinc-900 border-3 border-black p-5 rounded-2xl shadow-[4px_4px_0px_#000] space-y-2 flex flex-col justify-between">
+                      <div className="flex justify-between items-center">
+                        <span className="text-[8px] text-zinc-500 font-black uppercase tracking-widest leading-none">{w.label}</span>
+                        <w.icon className={`w-4 h-4 ${w.color}`} />
+                      </div>
+                      <p className="text-lg font-black text-white mt-1">{w.val}</p>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Detailed Markets distribution */}
+                <div className="bg-zinc-900 border-3 border-black rounded-2xl p-6 space-y-4 shadow-[5px_5px_0px_#000]">
+                  <h3 className="font-black text-white text-xs uppercase tracking-wider border-b-2 border-black pb-2">Prediction Contracts Analytics</h3>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-center">
+                    <div className="bg-zinc-950 p-4 border-2 border-black rounded-xl shadow-[2px_2px_0px_#000]">
+                      <span className="block font-black text-lg text-cyan-400">{openMarketsCount}</span>
+                      <span className="text-[8px] text-zinc-500 font-black uppercase">Active Open</span>
+                    </div>
+                    <div className="bg-zinc-950 p-4 border-2 border-black rounded-xl shadow-[2px_2px_0px_#000]">
+                      <span className="block font-black text-lg text-[#FF3366]">{closedMarketsCount}</span>
+                      <span className="text-[8px] text-zinc-550 font-black uppercase">Closed Pending</span>
+                    </div>
+                    <div className="bg-zinc-950 p-4 border-2 border-black rounded-xl shadow-[2px_2px_0px_#000]">
+                      <span className="block font-black text-lg text-emerald-400">{resolvedMarketsCount}</span>
+                      <span className="text-[8px] text-zinc-500 font-black uppercase">Settled Paid</span>
+                    </div>
+                    <div className="bg-zinc-950 p-4 border-2 border-black rounded-xl shadow-[2px_2px_0px_#000]">
+                      <span className="block font-black text-lg text-zinc-500">{cancelledMarketsCount}</span>
+                      <span className="text-[8px] text-zinc-550 font-black uppercase">Cancelled Refunded</span>
+                    </div>
                   </div>
                 </div>
 
-                <button 
-                  onClick={handleUpdateScores}
-                  className="w-full bg-[#FF3366] text-white border-2 border-black font-black text-xs tracking-wider uppercase py-3.5 rounded-xl shadow-[3px_3px_0px_#000] flex items-center justify-center gap-2 cursor-pointer"
-                >
-                  <RefreshCw className="w-3.5 h-3.5" /> Save Match Status & Score
-                </button>
-              </>
-            )}
-          </div>
-
-          {/* PANEL 2: CREATE CUSTOM PREDICTION */}
-          <div className="bg-zinc-900 border-3 border-black rounded-2xl p-6 space-y-6 shadow-[5px_5px_0px_#000]">
-            <h3 className="font-black text-white text-sm uppercase tracking-wider flex items-center gap-2 border-b-2 border-black pb-3 text-[#B6FF3B]">
-              <Plus className="w-5 h-5" /> Create Sandbox Prediction Market
-            </h3>
-
-            <form onSubmit={handleCreateCustomMarket} className="space-y-4">
-              <div className="space-y-2">
-                <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Market Question</label>
-                <input 
-                  type="text"
-                  required
-                  placeholder="e.g. Will Lionel Messi score a goal in the tournament?"
-                  value={customQuestion}
-                  onChange={(e) => setCustomQuestion(e.target.value)}
-                  className="w-full bg-zinc-950 border-2 border-black rounded-xl px-3.5 py-2.5 text-xs font-black text-white outline-none focus:border-[#B6FF3B] shadow-[2px_2px_0px_#000]"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Category</label>
-                  <select 
-                    value={customCategory}
-                    onChange={(e) => setCustomCategory(e.target.value)}
-                    className="w-full bg-zinc-950 border-2 border-black rounded-xl px-3.5 py-2.5 text-xs text-white font-black outline-none focus:border-[#B6FF3B] shadow-[2px_2px_0px_#000] transition-all"
-                  >
-                    <option value="custom">Custom Specials</option>
-                    <option value="player_special">Player Performance</option>
-                    <option value="match_winner">Match Outcome</option>
-                    <option value="total_goals">Goals</option>
-                  </select>
-                </div>
-
-                <div className="space-y-2">
-                  <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Match Ref (Optional)</label>
-                  <select 
-                    value={customMatchRef}
-                    onChange={(e) => setCustomMatchRef(e.target.value)}
-                    className="w-full bg-zinc-950 border-2 border-black rounded-xl px-3.5 py-2.5 text-xs text-white font-black outline-none focus:border-[#B6FF3B] shadow-[2px_2px_0px_#000] transition-all"
-                  >
-                    <option value="">None / Tournament General</option>
-                    {matches.map(m => (
-                      <option key={m.id} value={m.id}>
-                        Match #{m.id} ({getTeamName(m.home_team_id)} vs {getTeamName(m.away_team_id)})
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-
-              <div className="space-y-2">
-                <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Outcomes (Comma-separated)</label>
-                <input 
-                  type="text"
-                  required
-                  placeholder="e.g. Yes, No, Cancelled"
-                  value={customOptionsText}
-                  onChange={(e) => setCustomOptionsText(e.target.value)}
-                  className="w-full bg-zinc-950 border-2 border-black rounded-xl px-3.5 py-2.5 text-xs font-black text-white outline-none focus:border-[#B6FF3B] shadow-[2px_2px_0px_#000]"
-                />
-              </div>
-
-              <button 
-                type="submit"
-                disabled={creatingMarket}
-                className="w-full bg-[#B6FF3B] text-black border-2 border-black font-black text-xs tracking-wider uppercase py-3.5 rounded-xl shadow-[3px_3px_0px_#000] flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
-              >
-                {creatingMarket ? <Loader2 className="w-4 h-4 animate-spin" /> : <><Send className="w-3.5 h-3.5" /> Deploy Custom Prediction</>}
-              </button>
-            </form>
-          </div>
-
-          {/* PANEL 3: RESOLVE & MANAGE prediction MARKETS */}
-          <div className="bg-zinc-900 border-3 border-black rounded-2xl p-6 space-y-6 lg:col-span-2 shadow-[5px_5px_0px_#000]">
-            <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-3 border-b-2 border-black pb-3">
-              <h3 className="font-black text-white text-sm uppercase tracking-wider flex items-center gap-2 text-yellow-400">
-                <Award className="w-5 h-5" /> Manage & Settle Predictions
-              </h3>
-              
-              <div className="flex gap-1 overflow-x-auto">
-                {(['open', 'closed', 'resolved', 'cancelled'] as const).map(tabName => (
-                  <button
-                    key={tabName}
-                    onClick={() => setAdminMarketTab(tabName)}
-                    className={`px-3 py-1 rounded-lg text-[10px] font-black uppercase border-2 border-black transition-all ${
-                      adminMarketTab === tabName
-                        ? 'bg-yellow-400 text-black shadow-[1.5px_1.5px_0px_#000]'
-                        : 'bg-zinc-950 text-zinc-400 hover:text-white border-zinc-800'
-                    }`}
-                  >
-                    {tabName}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {loadingMarkets ? (
-              <p className="text-xs text-zinc-500 animate-pulse text-center py-6 font-bold">Loading prediction contracts...</p>
-            ) : currentTabMarkets.length === 0 ? (
-              <p className="text-xs text-zinc-500 py-8 text-center border-2 border-dashed border-black rounded-xl bg-zinc-950 font-bold">
-                No {adminMarketTab} prediction markets found.
-              </p>
-            ) : (
-              <div className="space-y-6">
-                <div className="space-y-2">
-                  <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Select Prediction Contract</label>
-                  <select 
-                    value={selectedMarketId}
-                    onChange={(e) => handleMarketSelectChange(e.target.value)}
-                    className="w-full bg-zinc-950 border-2 border-black rounded-xl px-3.5 py-2.5 text-xs text-white font-black outline-none focus:border-yellow-400 shadow-[2px_2px_0px_#000] transition-all"
-                  >
-                    {currentTabMarkets.map(m => (
-                      <option key={m.id} value={m.id} className="bg-zinc-950 text-white">
-                        [{m.category.toUpperCase()}] {m.question} (Pool: {m.total_pool.toFixed(0)} tokens)
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                {selectedMarket && (
-                  <>
-                    {(selectedMarket.status === 'open' || selectedMarket.status === 'closed') && (
-                      <form onSubmit={handleSettleMarket} className="space-y-6">
-                        <div className="space-y-3">
-                          <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest block">Choose Winning Outcome</label>
-                          <div className="flex flex-wrap gap-3">
-                            {selectedMarket.options.map(opt => (
-                              <button
-                                key={opt.id}
-                                type="button"
-                                onClick={() => setSelectedWinningOptionId(opt.id)}
-                                className={`px-4 py-2.5 rounded-xl text-xs font-black border-2 transition-all cursor-pointer ${
-                                  selectedWinningOptionId === opt.id
-                                    ? 'bg-yellow-400 text-black border-black shadow-[2px_2px_0px_#000]'
-                                    : 'bg-zinc-950 border-black text-zinc-400 hover:text-white shadow-[1px_1px_0px_#000]'
-                                }`}
-                              >
-                                {opt.option_name}
-                              </button>
-                            ))}
-                          </div>
-                        </div>
-
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                          <button
-                            type="submit"
-                            disabled={settlingMarket}
-                            className="bg-yellow-400 text-black border-2 border-black font-black text-xs tracking-wider uppercase py-3 rounded-xl shadow-[2.5px_2.5px_0px_#000] flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
-                          >
-                            {settlingMarket ? <Loader2 className="w-4 h-4 animate-spin" /> : <><Play className="w-3.5 h-3.5 fill-current" /> Settle Market</>}
-                          </button>
-
-                          <button
-                            type="button"
-                            onClick={handleCancelMarket}
-                            disabled={cancellingMarket}
-                            className="bg-red-650 text-white border-2 border-black font-black text-xs tracking-wider uppercase py-3 rounded-xl shadow-[2.5px_2.5px_0px_#000] flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
-                          >
-                            {cancellingMarket ? <Loader2 className="w-4 h-4 animate-spin" /> : <><XCircle className="w-3.5 h-3.5" /> Cancel & Refund</>}
-                          </button>
-                        </div>
-                      </form>
-                    )}
-
-                    {selectedMarket.status === 'resolved' && (
-                      <div className="space-y-4">
-                        <div className="bg-zinc-950 p-4 border-2 border-black rounded-xl text-xs space-y-2 shadow-[2px_2px_0px_#000]">
-                          <p className="font-black text-zinc-400">RESOLUTION DETAILS</p>
-                          <p className="font-bold">Winning Option UUID: <span className="text-[#B6FF3B]">{selectedMarket.resolved_option_id}</span></p>
-                        </div>
-
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                          <button
-                            type="button"
-                            onClick={handleReopenMarket}
-                            disabled={reopeningMarket}
-                            className="bg-purple-650 text-white border-2 border-black font-black text-xs tracking-wider uppercase py-3 rounded-xl shadow-[2.5px_2.5px_0px_#000] flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
-                          >
-                            {reopeningMarket ? <Loader2 className="w-4 h-4 animate-spin" /> : <><RotateCcw className="w-3.5 h-3.5" /> Reopen Market</>}
-                          </button>
-
-                          <button
-                            type="button"
-                            onClick={handleCancelMarket}
-                            disabled={cancellingMarket}
-                            className="bg-red-650 text-white border-2 border-black font-black text-xs tracking-wider uppercase py-3 rounded-xl shadow-[2.5px_2.5px_0px_#000] flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
-                          >
-                            {cancellingMarket ? <Loader2 className="w-4 h-4 animate-spin" /> : <><XCircle className="w-3.5 h-3.5" /> Cancel & Refund</>}
-                          </button>
-                        </div>
-                      </div>
-                    )}
-
-                    {selectedMarket.status === 'cancelled' && (
-                      <div className="bg-zinc-950 p-4 border-2 border-black rounded-xl text-center text-xs text-zinc-500 font-bold shadow-[2px_2px_0px_#000]">
-                        This market was cancelled and all stakes have been fully refunded to predictors.
-                      </div>
-                    )}
-                  </>
-                )}
               </div>
             )}
-          </div>
+          </>
+        )}
 
-        </div>
-      )}
+      </main>
 
     </div>
   );
