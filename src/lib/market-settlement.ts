@@ -1,4 +1,5 @@
 import { supabase } from './supabase';
+import { sendTelegramNotification } from './telegram-notifier';
 
 export async function payoutMarketToWinner(marketId: string, winningOptionId: string): Promise<boolean> {
   try {
@@ -68,6 +69,15 @@ export async function payoutMarketToWinner(marketId: string, winningOptionId: st
             message: `You won ${payoutAmount.toFixed(2)} tokens on "${winningOptionName}" for the market: "${question}"`,
             read: false
           });
+
+          // Send Telegram and PWA Push notification
+          sendTelegramNotification(
+            pos.user_id,
+            'Prediction Won ✅',
+            `You won ${payoutAmount.toFixed(2)} tokens on "${winningOptionName}" for the market: "${question}"`,
+            'settlement_alerts',
+            { marketId, url: `/markets/${marketId}` }
+          ).catch(e => console.error('Telegram/Push notification failed for winner:', e));
 
           // Update leaderboard & streak
           const profit = payoutAmount - Number(pos.stake);
@@ -143,6 +153,15 @@ export async function payoutMarketToWinner(marketId: string, winningOptionId: st
             message: `Your prediction on "${lOptName}" for "${question}" lost. You lost ${Number(lpos.stake).toFixed(2)} tokens.`,
             read: false
           });
+
+          // Send Telegram and PWA Push notification
+          sendTelegramNotification(
+            lpos.user_id,
+            'Prediction Lost ❌',
+            `Your prediction on "${lOptName}" for "${question}" lost. You lost ${Number(lpos.stake).toFixed(2)} tokens.`,
+            'settlement_alerts',
+            { marketId, url: `/markets/${marketId}` }
+          ).catch(e => console.error('Telegram/Push notification failed for loser:', e));
         }
       }
     }
@@ -224,6 +243,15 @@ export async function cancelMarket(marketId: string): Promise<boolean> {
             message: `Market was cancelled. Your prediction on "${marketRecord.question}" was refunded: +${refundAmount.toFixed(2)} tokens.`,
             read: false
           });
+
+          // Send Telegram and PWA Push notification
+          sendTelegramNotification(
+            pos.user_id,
+            'Prediction Refunded ℹ️',
+            `Market was cancelled. Your prediction on "${marketRecord.question}" was refunded: +${refundAmount.toFixed(2)} tokens.`,
+            'settlement_alerts',
+            { marketId, url: `/markets/${marketId}` }
+          ).catch(e => console.error('Telegram/Push notification failed for refund:', e));
         }
       }
     }
@@ -299,6 +327,15 @@ export async function reopenMarket(marketId: string): Promise<boolean> {
           message: `The market "${marketRecord.question}" was reopened by an admin for correction. Settle amount of ${payoutVal.toFixed(2)} tokens was reverted.`,
           read: false
         });
+
+        // Send Telegram and PWA Push notification
+        sendTelegramNotification(
+          p.user_id,
+          'Prediction Reopened ⚠️',
+          `The market "${marketRecord.question}" was reopened by an admin for correction. Settle amount of ${payoutVal.toFixed(2)} tokens was reverted.`,
+          'settlement_alerts',
+          { marketId, url: `/markets/${marketId}` }
+        ).catch(e => console.error('Telegram/Push notification failed for reopen:', e));
       }
     }
 
