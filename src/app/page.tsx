@@ -6,7 +6,8 @@ import { initialMatches, Match, Team } from '@/lib/data';
 import { 
   Sliders, RefreshCw, Send, Plus, Award, AlertTriangle, 
   Play, Loader2, RotateCcw, XCircle, Users, BarChart3, 
-  TrendingUp, Award as BadgeIcon, DollarSign, Activity, Flame, ShieldAlert, Trash2
+  TrendingUp, Award as BadgeIcon, DollarSign, Activity, Flame, ShieldAlert, Trash2,
+  Sparkles, Link, HelpCircle, CheckCircle, Edit2, PlusCircle, ToggleLeft, ToggleRight
 } from 'lucide-react';
 
 interface DBMarket {
@@ -34,8 +35,25 @@ interface DBUser {
   level: string;
 }
 
+interface TokenTask {
+  id?: string;
+  title: string;
+  description: string;
+  type: 'follow_x' | 'join_telegram' | 'join_discord' | 'visit_url' | 'quiz';
+  action_url?: string;
+  action_label?: string;
+  reward_amount: number;
+  quiz_question?: string;
+  quiz_options?: string[];
+  quiz_answer_index?: number;
+  is_active: boolean;
+  is_repeatable: boolean;
+  repeat_cooldown_hours?: number;
+  created_at?: string;
+}
+
 export default function AdminPage() {
-  const [activeSidebar, setActiveSidebar] = useState<'markets' | 'users' | 'analytics'>('markets');
+  const [activeSidebar, setActiveSidebar] = useState<'markets' | 'users' | 'analytics' | 'tasks'>('markets');
   const [matches, setMatches] = useState<any[]>([]);
   const [teams, setTeams] = useState<any[]>([]);
   const [loadingData, setLoadingData] = useState<boolean>(true);
@@ -76,6 +94,137 @@ export default function AdminPage() {
   // Sync state
   const [syncingApi, setSyncingApi] = useState<boolean>(false);
   const [clearingAllPredictions, setClearingAllPredictions] = useState<boolean>(false);
+
+  // Token Tasks state
+  const [tokenTasks, setTokenTasks] = useState<TokenTask[]>([]);
+  const [loadingTasks, setLoadingTasks] = useState<boolean>(false);
+  const [savingTask, setSavingTask] = useState<boolean>(false);
+  const [editingTask, setEditingTask] = useState<TokenTask | null>(null);
+  const [taskForm, setTaskForm] = useState<TokenTask>({
+    title: '',
+    description: '',
+    type: 'follow_x',
+    action_url: '',
+    action_label: 'Complete Task',
+    reward_amount: 50,
+    quiz_question: '',
+    quiz_options: ['', '', '', ''],
+    quiz_answer_index: 0,
+    is_active: true,
+    is_repeatable: false,
+    repeat_cooldown_hours: 24
+  });
+
+  // Token Tasks CRUD
+  const fetchTokenTasks = async () => {
+    setLoadingTasks(true);
+    try {
+      const res = await fetch('/api/admin/token-tasks');
+      const data = await res.json();
+      if (data.success) setTokenTasks(data.tasks || []);
+    } catch (e) {
+      console.error('Failed to load token tasks', e);
+    } finally {
+      setLoadingTasks(false);
+    }
+  };
+
+  const resetTaskForm = () => {
+    setEditingTask(null);
+    setTaskForm({
+      title: '', description: '', type: 'follow_x',
+      action_url: '', action_label: 'Complete Task',
+      reward_amount: 50, quiz_question: '',
+      quiz_options: ['', '', '', ''],
+      quiz_answer_index: 0, is_active: true,
+      is_repeatable: false, repeat_cooldown_hours: 24
+    });
+  };
+
+  const handleEditTask = (task: TokenTask) => {
+    setEditingTask(task);
+    setTaskForm({
+      ...task,
+      quiz_options: task.quiz_options || ['', '', '', '']
+    });
+  };
+
+  const handleSaveTask = async () => {
+    if (!taskForm.title.trim() || !taskForm.description.trim()) {
+      alert('Title and description are required');
+      return;
+    }
+    if (taskForm.type === 'quiz') {
+      const validOptions = (taskForm.quiz_options || []).filter(o => o.trim());
+      if (!taskForm.quiz_question?.trim() || validOptions.length < 2) {
+        alert('Quiz tasks need a question and at least 2 options');
+        return;
+      }
+    }
+    setSavingTask(true);
+    try {
+      const payload = {
+        ...taskForm,
+        quiz_options: taskForm.type === 'quiz'
+          ? (taskForm.quiz_options || []).filter(o => o.trim())
+          : null,
+        quiz_question: taskForm.type === 'quiz' ? taskForm.quiz_question : null,
+        quiz_answer_index: taskForm.type === 'quiz' ? taskForm.quiz_answer_index : null,
+        action_url: taskForm.type !== 'quiz' ? taskForm.action_url : null,
+      };
+
+      const method = editingTask?.id ? 'PATCH' : 'POST';
+      const body = editingTask?.id ? { id: editingTask.id, ...payload } : payload;
+
+      const res = await fetch('/api/admin/token-tasks', {
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+      const data = await res.json();
+      if (data.success) {
+        alert(editingTask?.id ? 'Task updated!' : 'Task created and live!');
+        resetTaskForm();
+        await fetchTokenTasks();
+      } else {
+        alert(`Error: ${data.error}`);
+      }
+    } catch (e: any) {
+      alert(`Error: ${e.message}`);
+    } finally {
+      setSavingTask(false);
+    }
+  };
+
+  const handleToggleTaskActive = async (task: TokenTask) => {
+    try {
+      const res = await fetch('/api/admin/token-tasks', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: task.id, is_active: !task.is_active })
+      });
+      const data = await res.json();
+      if (data.success) await fetchTokenTasks();
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handleDeleteTask = async (taskId: string) => {
+    if (!window.confirm('Delete this task? All user claims will also be removed.')) return;
+    try {
+      const res = await fetch('/api/admin/token-tasks', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: taskId })
+      });
+      const data = await res.json();
+      if (data.success) await fetchTokenTasks();
+      else alert(`Error: ${data.error}`);
+    } catch (e: any) {
+      alert(`Error: ${e.message}`);
+    }
+  };
 
   const handleClearAllPredictions = async () => {
     const confirmClear = window.confirm(
@@ -164,6 +313,12 @@ export default function AdminPage() {
     fetchData();
     fetchMarketsList();
   }, []);
+
+  useEffect(() => {
+    if (activeSidebar === 'tasks') {
+      fetchTokenTasks();
+    }
+  }, [activeSidebar]);
 
   useEffect(() => {
     if (activeSidebar === 'users') {
@@ -558,6 +713,7 @@ export default function AdminPage() {
             {[
               { id: 'markets', label: 'Market Control', icon: Sliders },
               { id: 'users', label: 'User Managers', icon: Users },
+              { id: 'tasks', label: 'Token Tasks', icon: Sparkles },
               { id: 'analytics', label: 'Platform Stats', icon: BarChart3 }
             ].map(item => {
               const isActive = activeSidebar === item.id;
@@ -1133,7 +1289,293 @@ export default function AdminPage() {
               </div>
             )}
 
-            {/* VIEW 3: PLATFORM STATS / ANALYTICS */}
+            {/* VIEW 3: TOKEN TASKS MANAGER */}
+            {activeSidebar === 'tasks' && (
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 text-left">
+
+                {/* LEFT: Create/Edit Task Form */}
+                <div className="bg-zinc-900 border-3 border-black rounded-2xl p-6 space-y-5 shadow-[5px_5px_0px_#000]">
+                  <div className="flex justify-between items-center border-b-2 border-black pb-2.5">
+                    <h3 className="font-black text-white text-xs uppercase tracking-wider flex items-center gap-2 text-[#B6FF3B]">
+                      <PlusCircle className="w-4.5 h-4.5" />
+                      {editingTask?.id ? 'Edit Task' : 'Create Task'}
+                    </h3>
+                    {editingTask?.id && (
+                      <button onClick={resetTaskForm} className="text-[9px] text-zinc-500 hover:text-white font-black uppercase border border-zinc-700 px-2.5 py-1 rounded-lg cursor-pointer">Cancel Edit</button>
+                    )}
+                  </div>
+
+                  {/* Task Type */}
+                  <div className="space-y-1.5">
+                    <label className="text-[9px] font-black text-zinc-400 uppercase tracking-widest">Task Type</label>
+                    <div className="grid grid-cols-2 gap-2">
+                      {[
+                        { val: 'follow_x', label: '𝕏 Follow X Account', icon: '𝕏' },
+                        { val: 'join_telegram', label: '✈️ Join Telegram', icon: '✈️' },
+                        { val: 'join_discord', label: '🎮 Join Discord', icon: '🎮' },
+                        { val: 'visit_url', label: '🔗 Visit URL', icon: '🔗' },
+                        { val: 'quiz', label: '🧠 Custom Quiz', icon: '🧠' },
+                      ].map(opt => (
+                        <button
+                          key={opt.val}
+                          onClick={() => setTaskForm(f => ({ ...f, type: opt.val as any }))}
+                          className={`py-1.5 px-2 rounded-lg border-2 text-[10px] font-black uppercase transition-all cursor-pointer text-left ${
+                            taskForm.type === opt.val
+                              ? 'bg-[#B6FF3B] text-black border-black shadow-[2px_2px_0px_#000]'
+                              : 'bg-zinc-950 border-black text-zinc-400 hover:text-white'
+                          }`}
+                        >
+                          {opt.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Title & Description */}
+                  <div className="space-y-3">
+                    <div className="space-y-1">
+                      <label className="text-[9px] font-black text-zinc-400 uppercase tracking-widest">Task Title</label>
+                      <input
+                        type="text"
+                        placeholder="e.g. Follow @WorldCupX on X"
+                        value={taskForm.title}
+                        onChange={e => setTaskForm(f => ({ ...f, title: e.target.value }))}
+                        className="w-full bg-zinc-950 border-2 border-black rounded-xl px-3.5 py-2 text-xs font-black text-white outline-none focus:border-[#B6FF3B] shadow-[1.5px_1.5px_0px_#000]"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[9px] font-black text-zinc-400 uppercase tracking-widest">Description</label>
+                      <input
+                        type="text"
+                        placeholder="e.g. Follow our official X account for updates"
+                        value={taskForm.description}
+                        onChange={e => setTaskForm(f => ({ ...f, description: e.target.value }))}
+                        className="w-full bg-zinc-950 border-2 border-black rounded-xl px-3.5 py-2 text-xs font-black text-white outline-none focus:border-[#B6FF3B] shadow-[1.5px_1.5px_0px_#000]"
+                      />
+                    </div>
+                  </div>
+
+                  {/* URL + Button Label (non-quiz tasks) */}
+                  {taskForm.type !== 'quiz' && (
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="space-y-1">
+                        <label className="text-[9px] font-black text-zinc-400 uppercase tracking-widest">Action URL</label>
+                        <input
+                          type="url"
+                          placeholder="https://twitter.com/WorldCupX"
+                          value={taskForm.action_url || ''}
+                          onChange={e => setTaskForm(f => ({ ...f, action_url: e.target.value }))}
+                          className="w-full bg-zinc-950 border-2 border-black rounded-xl px-3 py-2 text-xs font-black text-white outline-none focus:border-[#B6FF3B] shadow-[1.5px_1.5px_0px_#000]"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-[9px] font-black text-zinc-400 uppercase tracking-widest">Button Label</label>
+                        <input
+                          type="text"
+                          placeholder="Go & Follow"
+                          value={taskForm.action_label || ''}
+                          onChange={e => setTaskForm(f => ({ ...f, action_label: e.target.value }))}
+                          className="w-full bg-zinc-950 border-2 border-black rounded-xl px-3 py-2 text-xs font-black text-white outline-none focus:border-[#B6FF3B] shadow-[1.5px_1.5px_0px_#000]"
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Quiz Fields */}
+                  {taskForm.type === 'quiz' && (
+                    <div className="space-y-3">
+                      <div className="space-y-1">
+                        <label className="text-[9px] font-black text-zinc-400 uppercase tracking-widest">Quiz Question</label>
+                        <input
+                          type="text"
+                          placeholder="Which country won the 2022 World Cup?"
+                          value={taskForm.quiz_question || ''}
+                          onChange={e => setTaskForm(f => ({ ...f, quiz_question: e.target.value }))}
+                          className="w-full bg-zinc-950 border-2 border-black rounded-xl px-3.5 py-2 text-xs font-black text-white outline-none focus:border-[#B6FF3B] shadow-[1.5px_1.5px_0px_#000]"
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <label className="text-[9px] font-black text-zinc-400 uppercase tracking-widest">Options (mark correct with ✓)</label>
+                        {(taskForm.quiz_options || ['', '', '', '']).map((opt, idx) => (
+                          <div key={idx} className="flex items-center gap-2">
+                            <button
+                              onClick={() => setTaskForm(f => ({ ...f, quiz_answer_index: idx }))}
+                              className={`w-6 h-6 rounded-md border-2 border-black shrink-0 flex items-center justify-center text-[10px] font-black transition-all cursor-pointer ${
+                                taskForm.quiz_answer_index === idx
+                                  ? 'bg-[#B6FF3B] text-black'
+                                  : 'bg-zinc-950 text-zinc-600'
+                              }`}
+                            >
+                              {taskForm.quiz_answer_index === idx ? '✓' : idx + 1}
+                            </button>
+                            <input
+                              type="text"
+                              placeholder={`Option ${idx + 1}`}
+                              value={opt}
+                              onChange={e => {
+                                const newOpts = [...(taskForm.quiz_options || ['', '', '', ''])];
+                                newOpts[idx] = e.target.value;
+                                setTaskForm(f => ({ ...f, quiz_options: newOpts }));
+                              }}
+                              className="flex-1 bg-zinc-950 border-2 border-black rounded-lg px-3 py-1.5 text-xs font-black text-white outline-none focus:border-[#B6FF3B]"
+                            />
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Reward & Options Row */}
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1">
+                      <label className="text-[9px] font-black text-zinc-400 uppercase tracking-widest">Reward (Tokens)</label>
+                      <input
+                        type="number"
+                        min="1"
+                        max="10000"
+                        value={taskForm.reward_amount}
+                        onChange={e => setTaskForm(f => ({ ...f, reward_amount: parseInt(e.target.value) || 50 }))}
+                        className="w-full bg-zinc-950 border-2 border-black rounded-xl px-3 py-2 text-xs font-black text-white outline-none focus:border-[#B6FF3B] shadow-[1.5px_1.5px_0px_#000]"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[9px] font-black text-zinc-400 uppercase tracking-widest">Cooldown (Hours)</label>
+                      <input
+                        type="number"
+                        min="1"
+                        value={taskForm.repeat_cooldown_hours || 24}
+                        disabled={!taskForm.is_repeatable}
+                        onChange={e => setTaskForm(f => ({ ...f, repeat_cooldown_hours: parseInt(e.target.value) || 24 }))}
+                        className="w-full bg-zinc-950 border-2 border-black rounded-xl px-3 py-2 text-xs font-black text-white outline-none focus:border-[#B6FF3B] shadow-[1.5px_1.5px_0px_#000] disabled:opacity-40"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Toggles */}
+                  <div className="flex gap-3">
+                    <button
+                      onClick={() => setTaskForm(f => ({ ...f, is_active: !f.is_active }))}
+                      className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border-2 border-black text-[10px] font-black uppercase cursor-pointer transition-all ${
+                        taskForm.is_active ? 'bg-[#B6FF3B] text-black' : 'bg-zinc-950 text-zinc-400'
+                      }`}
+                    >
+                      {taskForm.is_active ? <ToggleRight className="w-3.5 h-3.5" /> : <ToggleLeft className="w-3.5 h-3.5" />}
+                      Active
+                    </button>
+                    <button
+                      onClick={() => setTaskForm(f => ({ ...f, is_repeatable: !f.is_repeatable }))}
+                      className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border-2 border-black text-[10px] font-black uppercase cursor-pointer transition-all ${
+                        taskForm.is_repeatable ? 'bg-[#00E5FF] text-black' : 'bg-zinc-950 text-zinc-400'
+                      }`}
+                    >
+                      {taskForm.is_repeatable ? <ToggleRight className="w-3.5 h-3.5" /> : <ToggleLeft className="w-3.5 h-3.5" />}
+                      Repeatable
+                    </button>
+                  </div>
+
+                  <button
+                    onClick={handleSaveTask}
+                    disabled={savingTask}
+                    className="w-full bg-[#B6FF3B] text-black border-2 border-black font-black text-xs tracking-wider uppercase py-3 rounded-xl shadow-[3px_3px_0px_#000] hover:translate-x-[-1.5px] hover:translate-y-[-1.5px] hover:shadow-[4.5px_4.5px_0px_#000] active:translate-x-[1px] active:translate-y-[1px] active:shadow-[1px_1px_0px_#000] flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50 transition-all"
+                  >
+                    {savingTask ? <Loader2 className="w-4 h-4 animate-spin" /> : <><Send className="w-3.5 h-3.5" /> {editingTask?.id ? 'Update Task' : 'Deploy Task'}</>}
+                  </button>
+                </div>
+
+                {/* RIGHT: Tasks List */}
+                <div className="bg-zinc-900 border-3 border-black rounded-2xl p-6 space-y-4 shadow-[5px_5px_0px_#000]">
+                  <div className="flex justify-between items-center border-b-2 border-black pb-2.5">
+                    <h3 className="font-black text-white text-xs uppercase tracking-wider flex items-center gap-2 text-[#00E5FF]">
+                      <Sparkles className="w-4.5 h-4.5" /> Live Token Tasks ({tokenTasks.length})
+                    </h3>
+                    <button onClick={fetchTokenTasks} className="p-1.5 rounded-lg bg-zinc-950 border border-black hover:border-zinc-600 cursor-pointer">
+                      <RefreshCw className="w-3.5 h-3.5 text-zinc-400" />
+                    </button>
+                  </div>
+
+                  {loadingTasks ? (
+                    <div className="py-12 flex flex-col items-center gap-2">
+                      <Loader2 className="w-6 h-6 animate-spin text-[#B6FF3B]" />
+                      <span className="text-[9px] text-zinc-500 font-bold uppercase">Loading tasks...</span>
+                    </div>
+                  ) : tokenTasks.length === 0 ? (
+                    <div className="py-12 text-center border-2 border-dashed border-zinc-800 rounded-xl">
+                      <Sparkles className="w-8 h-8 text-zinc-700 mx-auto mb-2" />
+                      <p className="text-[10px] text-zinc-500 font-bold uppercase">No tasks yet. Create one to the left.</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-3 max-h-[600px] overflow-y-auto no-scrollbar pr-1">
+                      {tokenTasks.map(task => {
+                        const typeIcon = task.type === 'follow_x' ? '𝕏' :
+                          task.type === 'join_telegram' ? '✈️' :
+                          task.type === 'join_discord' ? '🎮' :
+                          task.type === 'visit_url' ? '🔗' : '🧠';
+                        const typeColor = task.type === 'quiz' ? 'text-[#00E5FF]' :
+                          task.type === 'follow_x' ? 'text-zinc-200' : 'text-[#B6FF3B]';
+
+                        return (
+                          <div
+                            key={task.id}
+                            className={`bg-zinc-950 border-2 rounded-xl p-4 space-y-2 shadow-[2px_2px_0px_#000] transition-all ${
+                              task.is_active ? 'border-black' : 'border-zinc-800 opacity-50'
+                            }`}
+                          >
+                            <div className="flex justify-between items-start gap-2">
+                              <div className="flex-1 min-w-0">
+                                <h4 className={`text-[10px] font-black uppercase flex items-center gap-1.5 ${typeColor}`}>
+                                  <span>{typeIcon}</span>
+                                  <span className="truncate">{task.title}</span>
+                                </h4>
+                                <p className="text-[9px] text-zinc-500 font-bold mt-0.5 truncate">{task.description}</p>
+                                {task.type === 'quiz' && task.quiz_question && (
+                                  <p className="text-[8px] text-zinc-600 mt-0.5 italic truncate">❓ {task.quiz_question}</p>
+                                )}
+                                {task.action_url && (
+                                  <p className="text-[8px] text-zinc-600 mt-0.5 truncate">🔗 {task.action_url}</p>
+                                )}
+                              </div>
+                              <div className="shrink-0 flex flex-col items-end gap-1.5">
+                                <span className="text-[10px] font-black text-[#B6FF3B] bg-[#B6FF3B]/10 border border-[#B6FF3B]/30 px-2 py-0.5 rounded-full">+{task.reward_amount}</span>
+                                {task.is_repeatable && (
+                                  <span className="text-[7px] font-black text-[#00E5FF] uppercase">⟳ {task.repeat_cooldown_hours}h</span>
+                                )}
+                              </div>
+                            </div>
+                            <div className="flex gap-2 pt-1 border-t border-zinc-800">
+                              <button
+                                onClick={() => handleEditTask(task)}
+                                className="flex items-center gap-1 px-2.5 py-1 bg-zinc-900 border border-black rounded-lg text-[9px] font-black text-zinc-300 hover:text-white hover:border-zinc-600 cursor-pointer transition-all"
+                              >
+                                <Edit2 className="w-3 h-3" /> Edit
+                              </button>
+                              <button
+                                onClick={() => handleToggleTaskActive(task)}
+                                className={`flex items-center gap-1 px-2.5 py-1 border rounded-lg text-[9px] font-black cursor-pointer transition-all ${
+                                  task.is_active
+                                    ? 'bg-zinc-900 border-black text-zinc-400 hover:border-red-500 hover:text-red-400'
+                                    : 'bg-zinc-900 border-black text-zinc-600 hover:border-[#B6FF3B] hover:text-[#B6FF3B]'
+                                }`}
+                              >
+                                {task.is_active ? <><ToggleLeft className="w-3 h-3" /> Disable</> : <><ToggleRight className="w-3 h-3" /> Enable</>}
+                              </button>
+                              <button
+                                onClick={() => task.id && handleDeleteTask(task.id)}
+                                className="flex items-center gap-1 px-2.5 py-1 bg-zinc-900 border border-black rounded-lg text-[9px] font-black text-zinc-600 hover:text-red-500 hover:border-red-700 cursor-pointer transition-all ml-auto"
+                              >
+                                <Trash2 className="w-3 h-3" />
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+
+              </div>
+            )}
+
+            {/* VIEW 4: PLATFORM STATS / ANALYTICS */}
             {activeSidebar === 'analytics' && (
               <div className="space-y-6 text-left">
                 
