@@ -297,16 +297,18 @@ export async function broadcastTelegramNotification(
       finalCategory = categoryOrMessage as any;
     }
 
-    for (const conn of connections) {
-      await sendTelegramNotification(
-        conn.user_id,
-        finalTitle,
-        finalMessage,
-        finalCategory,
-        metadata,
-        inlineKeyboard
-      );
-    }
+    await Promise.allSettled(
+      connections.map((conn) =>
+        sendTelegramNotification(
+          conn.user_id,
+          finalTitle,
+          finalMessage,
+          finalCategory,
+          metadata,
+          inlineKeyboard
+        )
+      )
+    );
   } catch (err) {
     console.error('Error broadcasting telegram notification:', err);
   }
@@ -442,15 +444,17 @@ export async function broadcastTelegramPhoto(
 
     if (error || !connections || connections.length === 0) return;
 
-    for (const conn of connections) {
-      await sendTelegramPhoto(
-        conn.user_id,
-        photoBuffer,
-        caption,
-        category,
-        metadata
-      );
-    }
+    await Promise.allSettled(
+      connections.map((conn) =>
+        sendTelegramPhoto(
+          conn.user_id,
+          photoBuffer,
+          caption,
+          category,
+          metadata
+        )
+      )
+    );
   } catch (err) {
     console.error('Error broadcasting telegram photo:', err);
   }

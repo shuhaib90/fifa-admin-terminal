@@ -52,12 +52,12 @@ export async function generateMatchCardImage(params: DrawMatchParams): Promise<B
 
   // 4. Header metadata
   ctx.fillStyle = '#B6FF3B'; // Neon green
-  ctx.font = '900 16px "Courier New", monospace';
+  ctx.font = 'bold 16px Arial, sans-serif';
   ctx.textAlign = 'center';
   ctx.fillText(stage.toUpperCase(), 400, 50);
 
   ctx.fillStyle = '#FFFFFF';
-  ctx.font = '900 20px "Courier New", monospace';
+  ctx.font = 'bold 20px Arial, sans-serif';
   ctx.fillText('MATCH CENTER', 400, 85);
 
   // Draw thin divider line
@@ -70,7 +70,7 @@ export async function generateMatchCardImage(params: DrawMatchParams): Promise<B
 
   // 5. Home Team (Left side)
   ctx.fillStyle = '#FFFFFF';
-  ctx.font = '900 36px "Courier New", monospace';
+  ctx.font = 'bold 36px Arial, sans-serif';
   ctx.textAlign = 'center';
   
   // Wrap or truncate long team names
@@ -93,7 +93,7 @@ export async function generateMatchCardImage(params: DrawMatchParams): Promise<B
 
   // 7. Score (Center)
   ctx.fillStyle = '#FFFFFF';
-  ctx.font = '900 72px "Courier New", monospace';
+  ctx.font = 'bold 72px Arial, sans-serif';
   ctx.textAlign = 'center';
   
   // Text shadow effect (neobrutalist style)
@@ -119,12 +119,12 @@ export async function generateMatchCardImage(params: DrawMatchParams): Promise<B
   }
 
   ctx.fillStyle = statusColor;
-  ctx.font = '900 20px "Courier New", monospace';
+  ctx.font = 'bold 20px Arial, sans-serif';
   ctx.fillText(statusText, 400, 310);
 
   // 9. Footer Brand Info
   ctx.fillStyle = '#71717A'; // zinc-500
-  ctx.font = '700 14px "Courier New", monospace';
+  ctx.font = 'bold 14px Arial, sans-serif';
   ctx.fillText('WORLDCUPX 2026 PORTAL', 400, 410);
 
   return canvas.toBuffer('image/png');
@@ -174,12 +174,12 @@ export async function generatePredictionCardImage(params: DrawPredictionParams):
 
   // Header
   ctx.fillStyle = '#FF3366'; // Pink
-  ctx.font = '900 16px "Courier New", monospace';
+  ctx.font = 'bold 16px Arial, sans-serif';
   ctx.textAlign = 'center';
   ctx.fillText('ACTIVE PREDICTION CONTRACT', 400, 50);
 
   ctx.fillStyle = '#FFFFFF';
-  ctx.font = '900 20px "Courier New", monospace';
+  ctx.font = 'bold 20px Arial, sans-serif';
   ctx.fillText(`PREDICTED BY: @${username.toUpperCase()}`, 400, 85);
 
   // Divider
@@ -192,7 +192,7 @@ export async function generatePredictionCardImage(params: DrawPredictionParams):
 
   // Market Question
   ctx.fillStyle = '#FFFFFF';
-  ctx.font = '900 28px "Courier New", monospace';
+  ctx.font = 'bold 28px Arial, sans-serif';
   ctx.textAlign = 'center';
   
   const maxQuestionWidth = 700;
@@ -222,16 +222,16 @@ export async function generatePredictionCardImage(params: DrawPredictionParams):
   ctx.strokeRect(150, 240, 500, 80);
 
   ctx.fillStyle = '#B6FF3B'; 
-  ctx.font = '900 14px "Courier New", monospace';
+  ctx.font = 'bold 14px Arial, sans-serif';
   ctx.fillText('YOUR CHOICE', 400, 260);
 
   ctx.fillStyle = '#FFFFFF';
-  ctx.font = '900 28px "Courier New", monospace';
+  ctx.font = 'bold 28px Arial, sans-serif';
   ctx.fillText(choice.toUpperCase(), 400, 300);
 
   // Stats
   ctx.fillStyle = '#A1A1AA';
-  ctx.font = '900 16px "Courier New", monospace';
+  ctx.font = 'bold 16px Arial, sans-serif';
   ctx.textAlign = 'left';
   ctx.fillText(`STAKE: ${stake} WCX`, 150, 370);
   ctx.fillText(`AVG PRICE: ${avgPrice.toFixed(2)}`, 150, 400);
