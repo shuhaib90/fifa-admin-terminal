@@ -32,9 +32,23 @@ export async function generateMatchCardImage(params: DrawMatchParams): Promise<B
   const canvas = createCanvas(800, 450);
   const ctx = canvas.getContext('2d');
 
-  // 2. Load background image (match-center-bg.png)
+  // 2. Load background image (randomly select from bg-1.jpg to bg-5.jpg)
   const publicDir = path.join(process.cwd(), 'public');
-  const bgPath = path.join(publicDir, 'match-center-bg.png');
+  const backgroundsDir = path.join(publicDir, 'backgrounds');
+  let bgPath = path.join(publicDir, 'match-center-bg.png');
+
+  try {
+    if (fs.existsSync(backgroundsDir)) {
+      const files = fs.readdirSync(backgroundsDir).filter(f => f.startsWith('bg-') && (f.endsWith('.jpg') || f.endsWith('.png')));
+      if (files.length > 0) {
+        const randomFile = files[Math.floor(Math.random() * files.length)];
+        bgPath = path.join(backgroundsDir, randomFile);
+      }
+    }
+  } catch (err) {
+    console.error('Failed to read backgrounds directory, using default:', err);
+  }
+
   
   try {
     if (fs.existsSync(bgPath)) {
