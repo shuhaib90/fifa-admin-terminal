@@ -1,8 +1,9 @@
 import { NextResponse } from 'next/server';
 import { supabase } from '@/lib/supabase';
 import { settleMatchMarkets } from '@/lib/market-settlement';
-import { broadcastTelegramNotification } from '@/lib/telegram-notifier';
+import { broadcastTelegramNotification, broadcastTelegramPhoto } from '@/lib/telegram-notifier';
 import { broadcastPushNotification } from '@/lib/push-notifier';
+import { generateMatchCardImage } from '@/lib/canvas-generator';
 
 export async function POST(request: Request) {
   try {
@@ -56,10 +57,28 @@ export async function POST(request: Request) {
       try {
         const minText = minute ? ` - ${minute}'` : '';
 
+        const broadcastMatchCard = async (msg: string, category: 'match_alerts' | 'goal_alerts') => {
+          try {
+            const imgBuffer = await generateMatchCardImage({
+              homeTeamName: homeName,
+              awayTeamName: awayName,
+              homeScore: newHomeScore,
+              awayScore: newAwayScore,
+              status: status,
+              minute: status === 'live' ? Number(minute || 45) : null,
+              stage: status === 'live' ? 'LIVE SCORE UPDATE' : 'MATCH ALERT'
+            });
+            await broadcastTelegramPhoto(imgBuffer, msg, category, { matchId });
+          } catch (err) {
+            console.error('Failed to generate/broadcast canvas card, falling back to text:', err);
+            await broadcastTelegramNotification(msg);
+          }
+        };
+
         // 4a. Kickoff alert: scheduled/timed → live
         if (oldStatus !== 'live' && status === 'live') {
           const msg = `🏁 *MATCH STARTED!*\n\n*${homeName}* vs *${awayName}* is now live!\n\nFollow the action and predict outcomes on WorldCupX.`;
-          await broadcastTelegramNotification(msg);
+          await broadcastMatchCard(msg, 'match_alerts');
           await broadcastPushNotification(
             `🔴 LIVE NOW`,
             `${homeName} vs ${awayName}\nKickoff has started.`,
@@ -73,7 +92,7 @@ export async function POST(request: Request) {
           const diff = newHomeScore - oldHomeScore;
           const scorerText = diff > 1 ? `(${diff} Goals)` : '';
           const msg = `⚽ *GOAL ALERT!*\n\n*${homeName}* score! ${scorerText}\n\n*${homeName}* *${newHomeScore}* - ${newAwayScore} *${awayName}*${minText}`;
-          await broadcastTelegramNotification(msg);
+          await broadcastMatchCard(msg, 'goal_alerts');
           await broadcastPushNotification(
             `⚽ GOAL!`,
             `${homeName} ${newHomeScore} - ${newAwayScore} ${awayName}${minText}`,
@@ -87,7 +106,7 @@ export async function POST(request: Request) {
           const diff = newAwayScore - oldAwayScore;
           const scorerText = diff > 1 ? `(${diff} Goals)` : '';
           const msg = `⚽ *GOAL ALERT!*\n\n*${awayName}* score! ${scorerText}\n\n*${homeName}* ${newHomeScore} - *${newAwayScore}* *${awayName}*${minText}`;
-          await broadcastTelegramNotification(msg);
+          await broadcastMatchCard(msg, 'goal_alerts');
           await broadcastPushNotification(
             `⚽ GOAL!`,
             `${homeName} ${newHomeScore} - ${newAwayScore} ${awayName}${minText}`,
@@ -99,7 +118,7 @@ export async function POST(request: Request) {
         // 4d. Full-time alert: any state → finished
         if (oldStatus !== 'finished' && status === 'finished') {
           const msg = `🏁 *MATCH FINISHED!*\n\n*${homeName}* *${newHomeScore}* - *${newAwayScore}* *${awayName}*\n\nAll markets for this match are being settled now. Check your portfolio!`;
-          await broadcastTelegramNotification(msg);
+          await broadcastMatchCard(msg, 'match_alerts');
           await broadcastPushNotification(
             `🏁 FULL TIME`,
             `${homeName} ${newHomeScore} - ${newAwayScore} ${awayName}\nMatch finished.`,
