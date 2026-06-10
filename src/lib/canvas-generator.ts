@@ -1,6 +1,19 @@
-import { createCanvas, loadImage } from 'canvas';
+import { createCanvas, loadImage, registerFont } from 'canvas';
 import path from 'path';
 import fs from 'fs';
+
+// Register local Arial fonts to ensure consistent rendering across all platforms (Windows/Linux/Vercel)
+const fontsDir = path.join(process.cwd(), 'public', 'fonts');
+const arialPath = path.join(fontsDir, 'arial.ttf');
+const arialBoldPath = path.join(fontsDir, 'arialbd.ttf');
+
+if (fs.existsSync(arialPath)) {
+  registerFont(arialPath, { family: 'Arial', weight: 'normal' });
+}
+if (fs.existsSync(arialBoldPath)) {
+  registerFont(arialBoldPath, { family: 'Arial', weight: 'bold' });
+}
+
 
 interface DrawMatchParams {
   homeTeamName: string;
